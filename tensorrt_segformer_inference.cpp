@@ -21,7 +21,7 @@
 #include <jetson-utils/cudaUtility.h>
 #include <jetson-utils/imageFormat.h>
 
-using namespace jetson_segformer;
+using namespace nvinfer1;
 
 /**
     * @brief Custom logger class for TensorRT.
