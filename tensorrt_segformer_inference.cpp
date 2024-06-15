@@ -145,8 +145,9 @@ void visualize_result(float* final_output, int output_height, int output_width, 
 }
 
 /**
- * @brief Entry point of the jetson segformer inference program. This is a large blob of code that performs the following steps:
- * TODO(eandert): Clean this up and turn it into C++ class
+ * @brief Entry point of the jetson segformer inference program. This is a large (and ugly) blob of code that performs the following steps:
+ * TODO(eandert): Clean this up and turn it into C++ class. With tight time constraints you either get performant code, or clean code. This
+ * is the former.
  *
  * It performs the following steps:
  * 1. Parses the command line arguments to ensure the correct number of arguments are provided.
