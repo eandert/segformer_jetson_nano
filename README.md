@@ -92,7 +92,7 @@ If the build was successful, you should see the `tensorrt_segformer_inference` f
 
 ## Usage 
 
-After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version `example_image_output_hf.jpg` during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Please not that the color set on the C++ side is randomly genertated every time and that the text color doesn't seem to be properly matching the color of the segmentation but you should be able to see the same general segmentation zones as the python results like in the example output on the jetson `example_image_output_jetson.jpg`. TODO(eandert): Fix text color on C++ side to match class color on image. Once you have confirmed the expected output on the example image, you can try feeding in other images.
+After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Once you have confirmed the expected output on the example image, you can try feeding in other images.
 
 ```
 ./tensorrt_segformer_inference example_image.jpg example_image_output.jpg segformer-b4-finetuned-segments-sidewalk/config.json
