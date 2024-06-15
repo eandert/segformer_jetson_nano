@@ -100,7 +100,7 @@ std::map<int, std::string> parseId2Label(const std::string& filename) {
  * @param id2label              A map that maps class IDs to class labels.
  * @param as_float              Flag indicating whether the final output probabilities are in float format.
  */
-void visualize_result(float* final_output, int output_height, int output_width, int output_classes, std::string im_path, std::string output_image_path, std::map<int, std::string> id2label, bool as_float) {
+void visualize_result(float* final_output, int output_height, int output_width, int output_classes, std::string im_path, std::string output_image_path, std::map<int, std::string> id2label) {
     std::vector<cv::Vec3b> color_map = generateColorMap(35);
     color_map[0] = cv::Vec3b(0, 0, 0); // Set color for class 0 to black
 
@@ -165,7 +165,7 @@ void visualize_result(float* final_output, int output_height, int output_width, 
  * @param argv An array of command line arguments.
  * @return 0 if the program executed successfully, -1 otherwise.
  */
-int main() {
+int main(int argc, char *argv[]) {
     if (argc != 4) {
         std::cerr << "Usage: " << argv[0] << " <input_image> <output_image> <config.json>" << std::endl;
         return -1;

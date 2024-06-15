@@ -92,10 +92,10 @@ If the build was successful, you should see the `tensorrt_segformer_inference` f
 
 ## Usage 
 
-After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Once you have confirmed the expected output on the example image, you can try feeding in other images.
+After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version `example_image_output_hf.jpg` during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Please not that the color set on the C++ side is randomly genertated every time and that the text color doesn't seem to be properly matching the color of the segmentation but you should be able to see the same general segmentation zones as the python results like in the example output on the jetson `example_image_output_jetson.jpg`. TODO(eandert): Fix text color on C++ side to match class color on image. Once you have confirmed the expected output on the example image, you can try feeding in other images.
 
 ```
-./outputfile example_image.jpg example_image_output_deployed.jpg segformer-b4-finetuned-segments-sidewalk/config.json
+./tensorrt_segformer_inference example_image.jpg example_image_output.jpg segformer-b4-finetuned-segments-sidewalk/config.json
 ```
 
 ## Performance
@@ -111,7 +111,7 @@ Deserialization of the model is a one-time cost that occurs when the program sta
 
 Preprocessing is the fastest step, as it only involves reading the image from memory and copying it to the GPU. All preprocessing steps, including normalization, resizing, and feature extraction, are performed on the GPU using CUDA. The result is then copied to the input buffer of the model. Preprocessing typically takes around 50 ms.
 
-The majority of the time is spent on the inference step. Currently, there have been no optimizations applied to the ONNX model or the engine that TensorRT generates. There is lots of potential for optimization, such as quantization, changing input sizes, or other techniques that are currently not being utilized. Additionally, choosing a model that runs at an input size of 224 instead of 512 could provide lower accuracy but faster inference time.
+The majority of the time is spent on the inference step. Currently, there have been no optimizations applied to the ONNX model or the engine that TensorRT generates. There is lots of potential for optimization, such as quantization, exploring changing the model to fp16, or other techniques that are currently not being utilized. Additionally, choosing a model that runs at an input size of 224 instead of 512 could provide lower accuracy but faster inference time.
 
 Finally, postprocessing takes almost three times as long as preprocessing. This is because the postprocessing is done with OpenCV on the CPU, as it was not ported to CUDA due to time constraints. It is possible to move these OpenCV functions to the GPU or take advantage of output tensor parsing, but this has not been implemented yet.
 
