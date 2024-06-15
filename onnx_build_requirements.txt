@@ -1,0 +1,6 @@
+matplotlib
+numpy
+Pillow
+scikit_image
+torch
+transformers
