@@ -92,7 +92,7 @@ If the build was successful, you should see the `tensorrt_segformer_inference` f
 
 ## Usage 
 
-After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Once you have confirmed the expected output on the example image, you can try feeding in other images.
+After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Once you have confirmed the expected output on the example image, you can try feeding in other images. The colors on the Jetson version are a bit less clean than the Python output, but the areas generally line up - likely the bilinear interpolation needs to be worked on a bit more to get a perfect match.
 
 ```
 ./tensorrt_segformer_inference example_image.jpg example_image_output.jpg segformer-b4-finetuned-segments-sidewalk/config.json

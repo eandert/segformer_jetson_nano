@@ -88,6 +88,17 @@ std::map<int, std::string> parseId2Label(const std::string& filename) {
     return id2labelMap;
 }
 
+cv::Mat hwc_to_cwh(cv::Mat& src) {
+    std::vector<cv::Mat> channels(3);
+    cv::split(src, channels);
+    for (int i = 0; i < 3; i++) {
+        cv::transpose(channels[i], channels[i]);
+    }
+    cv::Mat transposed;
+    cv::merge(channels, transposed);  
+    return transposed;
+}
+
 /**
  * Visualizes the segmentation result by generating a colored overlay image.
  *
@@ -104,15 +115,15 @@ void visualize_result(float* final_output, int output_height, int output_width, 
     std::vector<cv::Vec3b> color_map = generateColorMap(35);
     color_map[0] = cv::Vec3b(0, 0, 0); // Set color for class 0 to black
 
-    // Get the class that is most probable for each pixel in the output
+    // Get the class that is most probable for each pixel in the output and convert CWH to HWC
     cv::Mat result_image = cv::Mat::zeros(output_height, output_width, CV_8UC1);
     for (int h = 0; h < output_height; h++) {
         for (int w = 0; w < output_width; w++) {
             float maxVal = -10000.0f;
-            int maxIdx = -1;
+            int maxIdx = 0;
 
             for (int c = 0; c < output_classes; c++) {
-                int index = c * output_height * output_width + h * output_width + w;
+                int index = c * output_height * output_width + w * output_height + h;
                 float val = final_output[index];
 
                 if (val > maxVal) {
@@ -130,9 +141,9 @@ void visualize_result(float* final_output, int output_height, int output_width, 
         colored_result.setTo(color_map[class_id], result_image == class_id);
     }
 
+    // Read the original image again, and apply the overlay. TODO(eandert): Use the original memory location.
     cv::Mat orig_image = cv::imread(im_path);
     cv::resize(colored_result, colored_result, orig_image.size(), 0, 0, cv::INTER_LINEAR);
-
     cv::Mat overlay_image;
     cv::addWeighted(orig_image, 0.5, colored_result, 0.5, 0, overlay_image);
 
@@ -183,7 +194,7 @@ int main(int argc, char *argv[]) {
     int output_classes = 35; // Number of classes in the model
     int output_height = 128;
     int output_width = 128;
-    int outputSize = output_classes * output_height * output_width;
+    int output_size = output_classes * output_height * output_width * sizeof(float);
 
     // Preprocessing
     float3 mean = make_float3(0.485f, 0.456f, 0.406f);
@@ -252,6 +263,9 @@ int main(int argc, char *argv[]) {
     // Convert the image to RGB8
     cv::cvtColor(input_image_cv2, input_image_cv2, cv::COLOR_BGR2RGB);
 
+    // Rearrange from HWC to CWH, TODO(eandert): Convert to a CUDA kernal.
+    cv::Mat input_image_rgb_cwh = hwc_to_cwh(input_image_cv2);
+
     // Allocate memory for the input image on the GPU
     float* raw_image_cuda;
     cuda_err = cudaMalloc(&raw_image_cuda, input_image_size_bytes);
@@ -261,8 +275,8 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Copy the preprocessed data to the GPU.
-    cuda_err = cudaMemcpy(raw_image_cuda, input_image_cv2.data, input_image_size_bytes, cudaMemcpyHostToDevice);
+    // Copy the preprocessed data to the GPU. TODO(eandert): Use zero copy here.
+    cuda_err = cudaMemcpy(raw_image_cuda, input_image_rgb_cwh.data, input_image_size_bytes, cudaMemcpyHostToDevice);
     if (cuda_err != cudaSuccess) {
         std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
         return -1;
@@ -277,9 +291,10 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Preprocess the image using the cudaTensorNormMeanBGR function.
+    // Preprocess the image using the cudaTensorNormMeanRGB function.
+    // TODO(eandert): Propose fix for the library as it seems to have a bug with BGR, meaning we had to use CV2 to do BGR2RGB (slow)!
     cuda_err = cudaTensorNormMeanRGB(raw_image_cuda, IMAGE_RGB8, input_image_cv2.rows, input_image_cv2.cols,
-                                     preprocess_input_cuda, 224, 224, range, mean, stdDev, stream);
+                                     preprocess_input_cuda, input_height, input_width, range, mean, stdDev, stream);
 
     if (cuda_err != cudaSuccess) {
         std::cerr << "Error during preprocessing: " << cudaGetErrorString(cuda_err) << std::endl;
@@ -304,7 +319,9 @@ int main(int argc, char *argv[]) {
     cudaEventRecord(start);
 
     // Perform inference.
+    cudaDeviceSynchronize();
     context->execute(batch_size, buffers);
+    cudaDeviceSynchronize();
 
     // Stop timing and print the elapsed time.
     cudaEventRecord(stop);
@@ -317,14 +334,14 @@ int main(int argc, char *argv[]) {
     cudaEventRecord(start);
 
     // Copy the output data back to the CPU.
-    float* final_output = new float[outputSize * sizeof(float)];
-    cuda_err = cudaMemcpy(final_output, buffers[1], outputSize * sizeof(float), cudaMemcpyDeviceToHost);
+    float* final_output = new float[output_size];
+    cuda_err = cudaMemcpy(final_output, buffers[1], batch_size * output_size, cudaMemcpyDeviceToHost);
     if (cuda_err != cudaSuccess) {
         std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
         return -1;
     }
 
-    // Postprocess the output data
+    // Postprocess the output data. TODO(eandert): Change to zero copy and a CUDA kernal instead.
     std::map<int, std::string> id2label = parseId2Label(argv[3]);
     visualize_result(final_output, output_height, output_width, output_classes, argv[1], argv[2], id2label);
 
