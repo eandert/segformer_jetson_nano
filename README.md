@@ -76,7 +76,7 @@ You will also need to install the following requirements to build the `.engine` 
 pip install -r engine_build_requirements.txt
 ```
 
-We need to also go in and do some surgery on the `jetson-inference` library, unfortunately as it has a bug that doesn't support BGR but our model need that or the colors will be off and with incorrect boundaries. It's a simple change but then you will need to follow the steps [here] again to build the project all over. Basically, you will keep getting an input error from the function because even though the template function is built to handle `isBGR` the type is for some reason not in the if statement. So do the following and then rebuild and re-install the `jetson-inference` project:
+We need to also go in and do some surgery on the `jetson-inference` library, unfortunately as it has a bug that doesn't support BGR but our model need that or the colors will be off and with incorrect boundaries (issue submitted here [Issue #1867](https://github.com/dusty-nv/jetson-inference/issues/1867)). It's a simple change but then you will need to follow the steps [here](https://github.com/dusty-nv/jetson-inference/blob/master/docs/building-repo-2.md) again to build the project all over. Basically, you will keep getting an input error from the function because even though the template function is built to handle `isBGR` the type is for some reason not in the if statement. So do the following and then rebuild and re-install the `jetson-inference` project:
 
 ```
 cd jetson-inference/c/
