@@ -76,6 +76,14 @@ You will also need to install the following requirements to build the `.engine` 
 pip install -r engine_build_requirements.txt
 ```
 
+We need to also go in and do some surgery on the `jetson-inference` library, unfortunately as it has a bug that doesn't support BGR but our model need that or the colors will be off and with incorrect boundaries. It's a simple change but then you will need to follow the steps [here] again to build the project all over. Basically, you will keep getting an input error from the function because even though the template function is built to handle `isBGR` the type is for some reason not in the if statement. So do the following and then rebuild and re-install the `jetson-inference` project:
+
+```
+cd jetson-inference/c/
+nano tensorConver.cu
+Replace line 226 ""if( format == IMAGE_RGB8 )" with "if( format == IMAGE_RGB8 || format == IMAGE_BGR8 )"
+```
+
 With all the requirements installed, it's time to build the engine file. Copy the `model.onnx` file that you built earlier to the Jetson and run the following command. You may see some warnings about casting `int64` to `int32`, but this should not be an issue. Note that generating this engine on a different device with a GPU may not work due to compatibility issues between TensorRT/CUDA versions. It is recommended to build on the Jetson Nano itself.
 
 ```

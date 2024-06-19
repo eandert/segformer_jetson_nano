@@ -48,7 +48,7 @@ class Logger : public nvinfer1::ILogger
  */
 std::vector<cv::Vec3b> generateColorMap(int numColors) {
     std::vector<cv::Vec3b> colorMap;
-    cv::RNG rng(12345); // Seed for random number generator
+    cv::RNG rng(72948); // Seed for random number generator
 
     for (int i = 0; i < numColors; ++i) {
         int r = rng.uniform(0, 256);
@@ -123,7 +123,7 @@ void visualize_result(float* final_output, int output_height, int output_width, 
             int maxIdx = 0;
 
             for (int c = 0; c < output_classes; c++) {
-                int index = c * output_height * output_width + w * output_height + h;
+                int index = c * output_height * output_height + h * output_width + w;
                 float val = final_output[index];
 
                 if (val > maxVal) {
@@ -258,13 +258,12 @@ int main(int argc, char *argv[]) {
         std::cerr << "Error: could not load image." << std::endl;
         return -1;
     }
-    int input_image_size_bytes = batch_size * input_image_cv2.cols * input_image_cv2.rows * num_pixels * input_pixel_type;
+    int input_image_size_bytes = batch_size * input_height * input_width * num_pixels * input_pixel_type;
 
-    // Convert the image to RGB8
-    cv::cvtColor(input_image_cv2, input_image_cv2, cv::COLOR_BGR2RGB);
-
-    // Rearrange from HWC to CWH, TODO(eandert): Convert to a CUDA kernal.
-    cv::Mat input_image_rgb_cwh = hwc_to_cwh(input_image_cv2);
+    // Resize the image to match the input size
+    cv::Mat resized_image;
+    cv::Size new_size(input_height, input_width);
+    cv::resize(input_image_cv2, resized_image, new_size, 0, 0, cv::INTER_LINEAR);
 
     // Allocate memory for the input image on the GPU
     float* raw_image_cuda;
@@ -276,7 +275,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Copy the preprocessed data to the GPU. TODO(eandert): Use zero copy here.
-    cuda_err = cudaMemcpy(raw_image_cuda, input_image_rgb_cwh.data, input_image_size_bytes, cudaMemcpyHostToDevice);
+    cuda_err = cudaMemcpy(raw_image_cuda, resized_image.data, input_image_size_bytes, cudaMemcpyHostToDevice);
     if (cuda_err != cudaSuccess) {
         std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
         return -1;
@@ -292,8 +291,8 @@ int main(int argc, char *argv[]) {
     }
 
     // Preprocess the image using the cudaTensorNormMeanRGB function.
-    // TODO(eandert): Propose fix for the library as it seems to have a bug with BGR, meaning we had to use CV2 to do BGR2RGB (slow)!
-    cuda_err = cudaTensorNormMeanRGB(raw_image_cuda, IMAGE_RGB8, input_image_cv2.rows, input_image_cv2.cols,
+    // TODO(eandert): Propose fix for the library as it seems to have a bug with BGR, meaning we had to modify the library itself to get this to work!
+    cuda_err = cudaTensorNormMeanBGR(raw_image_cuda, IMAGE_BGR8, input_height, input_width,
                                      preprocess_input_cuda, input_height, input_width, range, mean, stdDev, stream);
 
     if (cuda_err != cudaSuccess) {
