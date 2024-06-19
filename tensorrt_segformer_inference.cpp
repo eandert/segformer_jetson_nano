@@ -88,17 +88,6 @@ std::map<int, std::string> parseId2Label(const std::string& filename) {
     return id2labelMap;
 }
 
-cv::Mat hwc_to_cwh(cv::Mat& src) {
-    std::vector<cv::Mat> channels(3);
-    cv::split(src, channels);
-    for (int i = 0; i < 3; i++) {
-        cv::transpose(channels[i], channels[i]);
-    }
-    cv::Mat transposed;
-    cv::merge(channels, transposed);  
-    return transposed;
-}
-
 /**
  * Visualizes the segmentation result by generating a colored overlay image.
  *
@@ -123,7 +112,7 @@ void visualize_result(float* final_output, int output_height, int output_width, 
             int maxIdx = 0;
 
             for (int c = 0; c < output_classes; c++) {
-                int index = c * output_height * output_height + h * output_width + w;
+                int index = c * output_height * output_width + h * output_width + w;
                 float val = final_output[index];
 
                 if (val > maxVal) {
