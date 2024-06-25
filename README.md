@@ -76,6 +76,14 @@ You will also need to install the following requirements to build the `.engine` 
 pip install -r engine_build_requirements.txt
 ```
 
+We need to also go in and do some surgery on the `jetson-inference` library, unfortunately as it has a bug that doesn't support BGR but our model need that or the colors will be off and with incorrect boundaries (issue submitted here [Issue #1867](https://github.com/dusty-nv/jetson-inference/issues/1867)). It's a simple change but then you will need to follow the steps [here](https://github.com/dusty-nv/jetson-inference/blob/master/docs/building-repo-2.md) again to build the project all over. Basically, you will keep getting an input error from the function because even though the template function is built to handle `isBGR` the type is for some reason not in the if statement. So do the following and then rebuild and re-install the `jetson-inference` project:
+
+```
+cd jetson-inference/c/
+nano tensorConver.cu
+Replace line 226 ""if( format == IMAGE_RGB8 )" with "if( format == IMAGE_RGB8 || format == IMAGE_BGR8 )"
+```
+
 With all the requirements installed, it's time to build the engine file. Copy the `model.onnx` file that you built earlier to the Jetson and run the following command. You may see some warnings about casting `int64` to `int32`, but this should not be an issue. Note that generating this engine on a different device with a GPU may not work due to compatibility issues between TensorRT/CUDA versions. It is recommended to build on the Jetson Nano itself.
 
 ```
@@ -92,7 +100,7 @@ If the build was successful, you should see the `tensorrt_segformer_inference` f
 
 ## Usage 
 
-After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Once you have confirmed the expected output on the example image, you can try feeding in other images.
+After following all the installation steps above, you should be able to run the program with the included example images and obtain outputs similar to those produced by the Python version during installation. Keep in mind that these steps were specifically designed for the Nvidia Jetson Nano 4GB, and results may vary if used on different hardware. Once you have confirmed the expected output on the example image, you can try feeding in other images. The colors on the Jetson version are a bit less clean than the Python output, but the areas generally line up - likely the bilinear interpolation needs to be worked on a bit more to get a perfect match.
 
 ```
 ./tensorrt_segformer_inference example_image.jpg example_image_output.jpg segformer-b4-finetuned-segments-sidewalk/config.json
