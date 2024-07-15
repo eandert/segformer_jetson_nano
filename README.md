@@ -1,6 +1,6 @@
 # Segformer Jetson Nano
 
-This repository contains the C++ implementation of the Segformer model for the Jetson Nano.
+This repository contains a quick and dirty C++ implementation of the Segformer model for the Jetson Nano.
 
 ## Table of Contents
 
