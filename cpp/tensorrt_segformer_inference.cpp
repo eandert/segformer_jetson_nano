@@ -144,6 +144,50 @@ void visualize_result(float* final_output, int output_height, int output_width, 
     cv::imwrite(output_image_path, overlay_image);
 }
 
+std::tuple<IRuntime*, IExecutionContext*, std::vector<void*>, int> initializeTensorRTEngine(const std::string& engineFilePath, int batchSize) {
+    // Logger for TensorRT
+    ILogger gLogger;
+
+    // Create a TensorRT engine.
+    IRuntime* runtime = createInferRuntime(gLogger);
+    std::ifstream engineFile(engineFilePath, std::ios::binary);
+    if (!engineFile) {
+        std::cerr << "Failed to open engine file: " << engineFilePath << std::endl;
+        return std::make_tuple(nullptr, nullptr, std::vector<void*>(), 0);
+    }
+
+    std::vector<char> engineData((std::istreambuf_iterator<char>(engineFile)), std::istreambuf_iterator<char>());
+    engineFile.close();
+
+    ICudaEngine* engine = runtime->deserializeCudaEngine(engineData.data(), engineData.size(), nullptr);
+    IExecutionContext* context = engine->createExecutionContext();
+
+    // Dynamically find the number of bindings
+    int numBindings = engine->getNbBindings();
+
+    std::vector<void*> buffers(numBindings);
+
+    for (int i = 0; i < numBindings; ++i) {
+        // Get the dimensions of the binding.
+        nvinfer1::Dims dims = engine->getBindingDimensions(i);
+        // Calculate the total number of elements in the binding.
+        int numElements = std::accumulate(dims.d, dims.d + dims.nbDims, 1, std::multiplies<int>());
+
+        // Get the data type of the binding.
+        nvinfer1::DataType dataType = engine->getBindingDataType(i);
+        // Calculate the size of each element in the binding.
+        int elementSize = (dataType == nvinfer1::DataType::kFLOAT) ? sizeof(float) : sizeof(__half);
+
+        // Allocate memory for the binding.
+        cudaMalloc(&buffers[i], batchSize * numElements * elementSize);
+    }
+
+    // Do not destroy the runtime here, as it's being returned
+    // runtime->destroy();
+
+    return std::make_tuple(runtime, context, buffers, numBindings);
+}
+
 /**
  * @brief Entry point of the jetson segformer inference program. This is a large (and ugly) blob of code that performs the following steps:
  * TODO(eandert): Clean this up and turn it into C++ class. With tight time constraints you either get performant code, or clean code. This
@@ -190,9 +234,6 @@ int main(int argc, char *argv[]) {
     float3 stdDev = make_float3(0.229f, 0.224f, 0.225f);
     float2 range = make_float2(0.0f, 1.0f);
 
-    // Num bindings
-    int num_bindings = 2;
-
     // Create CUDA events for profiling.
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
@@ -207,36 +248,29 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Create a TensorRT engine.
-    IRuntime* runtime = createInferRuntime(gLogger);
-    std::ifstream engineFile("model.engine", std::ios::binary);
-    std::vector<char> engineData((std::istreambuf_iterator<char>(engineFile)), std::istreambuf_iterator<char>());
-    engineFile.close();
-    ICudaEngine* engine = runtime->deserializeCudaEngine(engineData.data(), engineData.size(), nullptr);
-    IExecutionContext* context = engine->createExecutionContext();
+    const std::string engineFilePath = "model.engine";
+    const int batchSize = 1;
 
-    // The model has 2 bindings.
-    void* buffers[2];
-    if(num_bindings != engine->getNbBindings()) {
-        std::cerr << "Number of bindings in the engine file does not match." << std::endl;
+    // Initialize the TensorRT engine
+    IRuntime* runtime;
+    IExecutionContext* context;
+    std::vector<void*> buffers;
+    int num_bindings;
+    std::tie(runtime, context, buffers, num_bindings) = initializeTensorRTEngine(engineFilePath, batchSize);
+
+    if (!runtime || !context) {
+        std::cerr << "Failed to initialize TensorRT engine." << std::endl;
         return -1;
     }
-    
-    for (int i = 0; i < num_bindings; ++i)
-    {
-        // Get the dimensions of the binding.
-        nvinfer1::Dims dims = engine->getBindingDimensions(i);
-        // Calculate the total number of elements in the binding.
-        int numElements = std::accumulate(dims.d, dims.d + dims.nbDims, 1, std::multiplies<int>());
 
-        // Get the data type of the binding.
-        nvinfer1::DataType dataType = engine->getBindingDataType(i);
-        // Calculate the size of each element in the binding.
-        int elementSize = (dataType == nvinfer1::DataType::kFLOAT) ? sizeof(float) : sizeof(__half);
-
-        // Allocate memory for the binding.
-        cudaMalloc(&buffers[i], batch_size * numElements * elementSize);
+    // Ensure buffers are correctly allocated
+    if (buffers.empty()) {
+        std::cerr << "Failed to allocate buffers." << std::endl;
+        return -1;
     }
+
+    // Now you have numBindings dynamically determined from the engine
+    std::cout << "Number of bindings: " << numBindings << std::endl;
 
     // Start timing.
     cudaEventRecord(start);
@@ -249,43 +283,36 @@ int main(int argc, char *argv[]) {
     }
     int input_image_size_bytes = batch_size * input_height * input_width * num_pixels * input_pixel_type;
 
-    // Resize the image to match the input size
-    cv::Mat resized_image;
+    // Move the image to the GPU
+    cv::cuda::GpuMat input_image_gpu;
+    input_image_gpu.upload(input_image_cv2);
+
+    // Resize the image on the GPU to match the input size
+    cv::cuda::GpuMat resized_image_gpu;
     cv::Size new_size(input_height, input_width);
-    cv::resize(input_image_cv2, resized_image, new_size, 0, 0, cv::INTER_LINEAR);
+    cv::cuda::resize(input_image_gpu, resized_image_gpu, new_size, 0, 0, cv::INTER_LINEAR);
 
-    // Allocate memory for the input image on the GPU
-    float* raw_image_cuda;
-    cuda_err = cudaMalloc(&raw_image_cuda, input_image_size_bytes);
-
+    // Allocate memory for the preprocessed image on the GPU
+    float* preprocess_input_cuda;
+    cudaError_t cuda_err = cudaMalloc(&preprocess_input_cuda, batch_size * input_height * input_width * num_pixels * sizeof(float));
     if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during malloc input: " << cudaGetErrorString(cuda_err) << std::endl;
-        return -1;
-    }
-
-    // Copy the preprocessed data to the GPU. TODO(eandert): Use zero copy here.
-    cuda_err = cudaMemcpy(raw_image_cuda, resized_image.data, input_image_size_bytes, cudaMemcpyHostToDevice);
-    if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
+        std::cerr << "Error during malloc of output: " << cudaGetErrorString(cuda_err) << std::endl;
         return -1;
     }
 
     // Allocate memory for the preprocessed image on the GPU
     float* preprocess_input_cuda;
     cuda_err = cudaMalloc(&preprocess_input_cuda, batch_size * input_height * input_width * num_pixels * sizeof(float));
-
     if (cuda_err != cudaSuccess) {
         std::cerr << "Error during malloc of output: " << cudaGetErrorString(cuda_err) << std::endl;
         return -1;
     }
 
     // Preprocess the image using the cudaTensorNormMeanRGB function.
-    // TODO(eandert): Propose fix for the library as it seems to have a bug with BGR, meaning we had to modify the library itself to get this to work!
-    cuda_err = cudaTensorNormMeanBGR(raw_image_cuda, IMAGE_BGR8, input_height, input_width,
-                                     preprocess_input_cuda, input_height, input_width, range, mean, stdDev, stream);
-
+    // TODO(eandert): Proposed fix for the library as it seems to have a bug with BGR, meaning we had to modify the library itself to get this to work!
+    cuda_err = cudaTensorNormMeanBGR(preprocess_input_cuda, /* other parameters */, stream);
     if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during preprocessing: " << cudaGetErrorString(cuda_err) << std::endl;
+        std::cerr << "Error during cudaTensorNormMeanBGR: " << cudaGetErrorString(cuda_err) << std::endl;
         return -1;
     }
 
@@ -323,7 +350,7 @@ int main(int argc, char *argv[]) {
 
     // Copy the output data back to the CPU.
     float* final_output = new float[output_size];
-    cuda_err = cudaMemcpy(final_output, buffers[1], batch_size * output_size, cudaMemcpyDeviceToHost);
+    cuda_err = cudaMemcpy(final_output, buffers[num_bindings], batch_size * output_size, cudaMemcpyDeviceToHost);
     if (cuda_err != cudaSuccess) {
         std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
         return -1;
