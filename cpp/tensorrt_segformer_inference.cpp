@@ -215,6 +215,12 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    std::string input_directory = argv[1];
+    std::string output_directory = argv[2];
+
+    // Ensure output directory exists
+    fs::create_directories(output_directory);
+
     // Inputs
     int input_height = 512;
     int input_width = 512;
@@ -269,103 +275,115 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    // Now you have numBindings dynamically determined from the engine
-    std::cout << "Number of bindings: " << numBindings << std::endl;
+    // Iterate over all .jpg files in the input directory
+    for (const auto& entry : fs::directory_iterator(input_directory)) {
+        if (entry.path().extension() == ".jpg") {
+            std::string inputPath = entry.path().string();
+            std::string input_image_path = entry.path().filename().string();
 
-    // Start timing.
-    cudaEventRecord(start);
+            // Construct new filename and output path
+            std::string output_filename = filename.substr(0, filename.find_last_of(".")) + "_processed.jpg";
+            std::string output_image_path = output_directory + "/" + output_filename;
 
-    // Load the input image using OpenCV in BGR color space.
-    cv::Mat input_image_cv2 = cv::imread(argv[1], cv::IMREAD_COLOR);
-    if(input_image_cv2.empty()) {
-        std::cerr << "Error: could not load image." << std::endl;
-        return -1;
+            // Start timing.
+            cudaEventRecord(start);
+
+            // Load the input image using OpenCV in BGR color space.
+            cv::Mat input_image_cv2 = cv::imread(input_image_path, cv::IMREAD_COLOR);
+            if(input_image_cv2.empty()) {
+                std::cerr << "Error: could not load image." << std::endl;
+                return -1;
+            }
+            int input_image_size_bytes = batch_size * input_height * input_width * num_pixels * input_pixel_type;
+
+            // Move the image to the GPU
+            cv::cuda::GpuMat input_image_gpu;
+            input_image_gpu.upload(input_image_cv2);
+
+            // Resize the image on the GPU to match the input size
+            cv::cuda::GpuMat resized_image_gpu;
+            cv::Size new_size(input_height, input_width);
+            cv::cuda::resize(input_image_gpu, resized_image_gpu, new_size, 0, 0, cv::INTER_LINEAR);
+
+            // Allocate memory for the preprocessed image on the GPU
+            float* preprocess_input_cuda;
+            cudaError_t cuda_err = cudaMalloc(&preprocess_input_cuda, batch_size * input_height * input_width * num_pixels * sizeof(float));
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "Error during malloc of output: " << cudaGetErrorString(cuda_err) << std::endl;
+                return -1;
+            }
+
+            // Allocate memory for the preprocessed image on the GPU
+            float* preprocess_input_cuda;
+            cuda_err = cudaMalloc(&preprocess_input_cuda, batch_size * input_height * input_width * num_pixels * sizeof(float));
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "Error during malloc of output: " << cudaGetErrorString(cuda_err) << std::endl;
+                return -1;
+            }
+
+            // Preprocess the image using the cudaTensorNormMeanRGB function.
+            // TODO(eandert): Proposed fix for the library as it seems to have a bug with BGR, meaning we had to modify the library itself to get this to work!
+            cuda_err = cudaTensorNormMeanBGR(preprocess_input_cuda, /* other parameters */, stream);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "Error during cudaTensorNormMeanBGR: " << cudaGetErrorString(cuda_err) << std::endl;
+                return -1;
+            }
+
+            // Copy the preprocessed data to the GPU. TODO(eandert): Change to zero copy.
+            cuda_err = cudaMemcpy(buffers[0], preprocess_input_cuda, batch_size * preprocessed_input_size_bytes, cudaMemcpyDeviceToDevice);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
+                return -1;
+            }
+
+            // Stop timing and print the elapsed time.
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+            float milliseconds = 0;
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            std::cout << "Preprocessing time: " << milliseconds << " ms" << std::endl;
+
+            // Start timing.
+            cudaEventRecord(start);
+
+            // Perform inference.
+            cudaDeviceSynchronize();
+            context->execute(batch_size, buffers);
+            cudaDeviceSynchronize();
+
+            // Stop timing and print the elapsed time.
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+            milliseconds = 0;
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            std::cout << "Inference time: " << milliseconds << " ms" << std::endl;
+
+            // Start timing.
+            cudaEventRecord(start);
+
+            // Copy the output data back to the CPU.
+            float* final_output = new float[output_size];
+            cuda_err = cudaMemcpy(final_output, buffers[num_bindings], batch_size * output_size, cudaMemcpyDeviceToHost);
+            if (cuda_err != cudaSuccess) {
+                std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
+                return -1;
+            }
+
+            // Postprocess the output data. TODO(eandert): Change to zero copy and a CUDA kernal instead.
+            std::map<int, std::string> id2label = parseId2Label(argv[3]);
+            visualize_result(final_output, output_height, output_width, output_classes, input_image_path, output_image_path, id2label);
+
+            // Stop timing and print the elapsed time.
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+            milliseconds = 0;
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            std::cout << "Postprocessing time: " << milliseconds << " ms" << std::endl;
+
+            std::cout << "Processed " << inputPath << "; saved to " << outputPath << std::endl;
+            cudaDeviceSynchronize();
+        }
     }
-    int input_image_size_bytes = batch_size * input_height * input_width * num_pixels * input_pixel_type;
-
-    // Move the image to the GPU
-    cv::cuda::GpuMat input_image_gpu;
-    input_image_gpu.upload(input_image_cv2);
-
-    // Resize the image on the GPU to match the input size
-    cv::cuda::GpuMat resized_image_gpu;
-    cv::Size new_size(input_height, input_width);
-    cv::cuda::resize(input_image_gpu, resized_image_gpu, new_size, 0, 0, cv::INTER_LINEAR);
-
-    // Allocate memory for the preprocessed image on the GPU
-    float* preprocess_input_cuda;
-    cudaError_t cuda_err = cudaMalloc(&preprocess_input_cuda, batch_size * input_height * input_width * num_pixels * sizeof(float));
-    if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during malloc of output: " << cudaGetErrorString(cuda_err) << std::endl;
-        return -1;
-    }
-
-    // Allocate memory for the preprocessed image on the GPU
-    float* preprocess_input_cuda;
-    cuda_err = cudaMalloc(&preprocess_input_cuda, batch_size * input_height * input_width * num_pixels * sizeof(float));
-    if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during malloc of output: " << cudaGetErrorString(cuda_err) << std::endl;
-        return -1;
-    }
-
-    // Preprocess the image using the cudaTensorNormMeanRGB function.
-    // TODO(eandert): Proposed fix for the library as it seems to have a bug with BGR, meaning we had to modify the library itself to get this to work!
-    cuda_err = cudaTensorNormMeanBGR(preprocess_input_cuda, /* other parameters */, stream);
-    if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during cudaTensorNormMeanBGR: " << cudaGetErrorString(cuda_err) << std::endl;
-        return -1;
-    }
-
-    // Copy the preprocessed data to the GPU. TODO(eandert): Change to zero copy.
-    cuda_err = cudaMemcpy(buffers[0], preprocess_input_cuda, batch_size * preprocessed_input_size_bytes, cudaMemcpyDeviceToDevice);
-    if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
-        return -1;
-    }
-
-    // Stop timing and print the elapsed time.
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "Preprocessing time: " << milliseconds << " ms" << std::endl;
-
-    // Start timing.
-    cudaEventRecord(start);
-
-    // Perform inference.
-    cudaDeviceSynchronize();
-    context->execute(batch_size, buffers);
-    cudaDeviceSynchronize();
-
-    // Stop timing and print the elapsed time.
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "Inference time: " << milliseconds << " ms" << std::endl;
-
-    // Start timing.
-    cudaEventRecord(start);
-
-    // Copy the output data back to the CPU.
-    float* final_output = new float[output_size];
-    cuda_err = cudaMemcpy(final_output, buffers[num_bindings], batch_size * output_size, cudaMemcpyDeviceToHost);
-    if (cuda_err != cudaSuccess) {
-        std::cerr << "Error during copy to input: " << cudaGetErrorString(cuda_err) << std::endl;
-        return -1;
-    }
-
-    // Postprocess the output data. TODO(eandert): Change to zero copy and a CUDA kernal instead.
-    std::map<int, std::string> id2label = parseId2Label(argv[3]);
-    visualize_result(final_output, output_height, output_width, output_classes, argv[1], argv[2], id2label);
-
-    // Stop timing and print the elapsed time.
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cout << "Postprocessing time: " << milliseconds << " ms" << std::endl;
 
     // Clean up.
     cudaDeviceSynchronize();

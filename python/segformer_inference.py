@@ -1,5 +1,8 @@
 # Standard library imports
+import glob
 import json
+import os
+import time
 
 # Third party imports
 from PIL import Image, ImageDraw, ImageFont
@@ -14,7 +17,7 @@ import torch.nn.functional as F
 from transformers import AutoImageProcessor, SegformerForSemanticSegmentation
 
 class SegformerInference:
-    def __init__(self, model_name, config_path, preproc_config_path, as_float=False):
+    def __init__(self, model_name, config_path, preproc_config_path, use_cv2 = True, as_float=False):
         with open(config_path) as f:
             self.config = json.load(f)
         with open(preproc_config_path) as f:
@@ -27,6 +30,7 @@ class SegformerInference:
         self.model.eval()
         self.processor = AutoImageProcessor.from_pretrained(model_name)
         self.as_float = as_float
+        self.use_cv2 = use_cv2
         self.id2label = self.config['id2label'] # Get the mapping from class ID to name
         self.model_input_size = [self.preproc_config["size"], self.preproc_config["size"]]
 
@@ -53,17 +57,20 @@ class SegformerInference:
         result = self.model(image)
         return result
 
-    def run_inference(self, im_path):
-        original_image = io.imread(im_path)
+    def run_inference(self, input_path, output_path):
+        original_image = io.imread(input_path)
         orig_im_size = original_image.shape[0:2]
-        preproc_image = self.preprocess_image_cv2(original_image, self.model_input_size)
-        preproc_image = preproc_image.to(self.device)
+        if self.use_cv2:
+            preproc_image = self.preprocess_image_cv2(original_image, self.model_input_size)
+            preproc_image = preproc_image.to(self.device)
+        else:
+            preproc_image = self.processor(original_image, return_tensors="pt").pixel_values.to(self.device)
         result = self.inference(preproc_image)
         result_image = self.postprocess_image(result[0][0], orig_im_size)
-        self.visualize_result(result_image, im_path, self.id2label, self.as_float)
+        self.annotate_result(result_image, input_path, self.id2label, output_path)
         return result_image
-    
-    def visualize_result(self, result_image, im_path, id2label, as_float):
+
+    def annotate_result(self, result_image, input_path, id2label, output_path):
         # Define a color map that maps each class ID to a specific color
         color_map = plt.get_cmap('tab20', 35).colors  # Get 35 distinct colors
 
@@ -86,7 +93,7 @@ class SegformerInference:
         seg_image = Image.fromarray(colored_result)
 
         # Open the original image
-        orig_image = Image.open(im_path)
+        orig_image = Image.open(input_path)
 
         # Resize the segmentation image to the original size
         seg_image = seg_image.resize(orig_image.size, Image.NEAREST)
@@ -101,12 +108,53 @@ class SegformerInference:
             draw.rectangle([0, i * 20, 20, (i + 1) * 20], fill=tuple((np.array(color) * 255).astype(int)))
             draw.text((22, i * 20), f"{class_name} (ID: {class_id})", fill="white", font=font)
 
-        # Save the result
-        if as_float:
-            overlay_image.save("example_image_output_float.jpg")
-        else:
-            overlay_image.save("example_image_output.jpg")
+        # Save the result to the specified output path
+        overlay_image.save(output_path)
 
 if __name__ == "__main__":
-    segformer = SegformerInference("nickmuchi/segformer-b4-finetuned-segments-sidewalk", "segformer-b4-finetuned-segments-sidewalk/config.json", "segformer-b4-finetuned-segments-sidewalk/preprocessor_config.json")
-    segformer.run_inference("./example_image.jpg")
+    # List of configurations
+    configurations = [
+        ("nickmuchi/segformer-b4-finetuned-segments-sidewalk", "segformer_models/segformer-b4-finetuned-segments-sidewalk/config.json", "segformer_models/segformer-b4-finetuned-segments-sidewalk/preprocessor_config.json"),
+        # Add more configurations as needed
+    ]
+
+    # Find all .jpg images within the input_images folder
+    image_paths = glob.glob('input/*.jpg')
+    total_time_per_configuration = []  # Store total time taken per configuration
+
+    for model_name, config_path, preprocessor_config_path in configurations:
+        configuration_name = model_name.split("/")[-1]  # Extract configuration name from the model name
+        print(f"Starting inference with configuration: {configuration_name}")  # Print the name of the configuration
+
+        start_time_config = time.time()  # Start time for this configuration
+        segformer = SegformerInference(model_name, config_path, preprocessor_config_path)
+        
+        times_per_image = []  # Store times for each image processed with this configuration
+        
+        for image_path in image_paths:
+            # Extract the filename from input folder and create a new filename for the output folder
+            base_name = os.path.basename(image_path)
+            name_without_ext = os.path.splitext(base_name)[0]
+            new_file_name = f"{name_without_ext}_" + configuration_name + "_processed.jpg"
+            new_file_path = os.path.join("output", new_file_name)
+
+            start_time_image = time.time()  # Start time for this image
+            segformer.run_inference(image_path, new_file_path)
+            end_time_image = time.time()  # End time for this image
+            
+            time_taken_image = end_time_image - start_time_image
+            times_per_image.append(time_taken_image)  # Store time taken for this image
+            
+            print(f"Inference completed for {image_path} using configuration {configuration_name} in {time_taken_image:.2f} seconds")
+        
+        end_time_config = time.time()  # End time for this configuration
+        total_time_config = end_time_config - start_time_config
+        total_time_per_configuration.append(total_time_config)  # Store total time taken for this configuration
+        
+        avg_time_per_image = sum(times_per_image) / len(times_per_image) if times_per_image else 0
+        print(f"Average time per image for configuration {configuration_name}: {avg_time_per_image:.2f} seconds")
+        print(f"Total time for configuration {configuration_name}: {total_time_config:.2f} seconds")
+
+    # Calculate and print the overall average time per configuration
+    overall_avg_time_per_config = sum(total_time_per_configuration) / len(total_time_per_configuration) if total_time_per_configuration else 0
+    print(f"Overall average time per configuration: {overall_avg_time_per_config:.2f} seconds")

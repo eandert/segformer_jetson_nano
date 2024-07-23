@@ -22,19 +22,22 @@ cd segformer_jetson_nano
 Next, clone the repository for the desired segformer model from HuggingFace (or any other source). The implementation in this repository is set up to use the `nickmuchi/segformer-b4-finetuned-segments-sidewalk` model, so the following steps will guide you through that:
 
 ```
+mkdir segformer_models
+cd segformer_models
 git clone https://huggingface.co/nickmuchi/segformer-b4-finetuned-segments-sidewalk
+cd ../
 ```
 
 This will clone the repository into the `segformer-b4-finetuned-segments-sidewalk` folder. All scripts in this repository will reference that folder structure. If you choose a different model, make sure to modify the name accordingly in the scripts. Now, let's install the requirements to build the ONNX file:
 
 ```
-pip install -r onnx_build_requirements.txt
+pip install -r python/onnx_build_requirements.txt
 ```
 
 With the repositories cloned and the requirements installed, we can now verify that the inference is working correctly on the example image. This should create a file called `example_image_output.jpg` in the main directory, which should match the one included in the repository labeled `example_image_output.jpg`. If the output image does not match, there may be an issue and you should not proceed to create an ONNX file.
 
 ```
-python3 segformer_inference.py
+python3 python/segformer_inference.py
 ```
 
 Assuming the image output matches, we can now create the ONNX file. You may see some warnings about CUDA, but that is okay as it will fall back to the CPU. At the end of this process, there should be no exceptions raised after it states "Checking the ONNX model..." and it should state "The ONNX model is well formed." if it has succeeded.

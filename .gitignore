@@ -1,3 +1,4 @@
 
 model.onnx
 /segformer-b4-finetuned-segments-sidewalk
+segformer_models/segformer-b4-finetuned-segments-sidewalk/
